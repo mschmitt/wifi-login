@@ -1,0 +1,89 @@
+#!/bin/bash
+
+UNAME_S=$(uname -s)
+
+function out {
+	if test -t 0
+	then
+		echo "$1"
+	else
+		osascript -e "display notification \"$1\" with title \"Wifi Login\""
+	fi
+}
+
+function test_mozilla {
+	curl --connect-timeout 5 http://detectportal.firefox.com/success.txt 2>&1 | 
+		grep -q success
+}
+
+function test_dig {
+	dig team-frickel.de NS | grep -q '^team-frickel.de.*NS'
+}
+
+function debug {
+	if [[ $DEBUG ]]
+	then
+		echo "$1"
+	fi
+}
+
+function kill_portallogin {
+	case "$UNAME_S" in
+		"Darwin")
+			pkill "Captive Network Assistant"
+			;;
+	esac
+}
+
+for i in $(seq 1 10)
+do
+	# Find connected SSID
+	case "$UNAME_S" in
+		"Darwin")
+			AIRCMD='/System/Library/PrivateFrameworks/Apple80211.framework/Versions/A/Resources/airport'
+			CONNECTED_SSID=$($AIRCMD -I | grep -v BSSID | sed -n 's/.*SSID: //p')
+			;;
+		*)
+			out "OS not supported"
+			;;
+	esac
+
+	# source the matching include
+	if [[ ! $CONNECTED_SSID ]]
+	then
+		out "Wifi not connected."
+		sleep 3
+		continue
+	fi
+	CONFDIR="$(dirname $0)/$(basename $0).conf.d"
+	if [[ -s "$CONFDIR/$CONNECTED_SSID.conf" ]]
+	then
+		. "$CONFDIR/$CONNECTED_SSID.conf"
+		if [[ $ANONYMOUS ]]
+		then
+			kill_portallogin
+			do_login
+		else
+			if [[ -s "$CONFDIR/$CONNECTED_SSID.auth" ]]
+			then
+				kill_portallogin
+				do_login "$CONFDIR/$CONNECTED_SSID.auth"
+			else
+				out "$CONNECTED_SSID: No authentication available."
+				sleep 3
+				continue
+			fi
+		fi
+	else
+		out "$CONNECTED_SSID: No configuration available."
+	fi
+
+	if test_dig
+	then
+		out "$CONNECTED_SSID: Internet is accessible"
+		exit
+	else
+		out "$CONNECTED_SSID: Internet NOT accessible"
+	fi
+	sleep 3
+done
